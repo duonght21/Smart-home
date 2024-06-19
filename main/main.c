@@ -29,7 +29,7 @@ static char sensor_data[SENSOR_BUFFER_SIZE];
 static const char *DHT_TAG = "DHT: ";
 static float humidity, temperature;
 
-#define SENSOR_TYPE DHT_TYPE_AM2301
+#define SENSOR_TYPE DHT_TYPE_DHT11
 #define DHT_GPIO_NUM GPIO_NUM_4
 
 esp_err_t get_sensor_data() {
@@ -52,21 +52,21 @@ static const int RX_BUF_SIZE = 1024;
 
 void uart_init(void) {
     const uart_config_t uart_config = {
-        .baud_rate = 9600,
+        .baud_rate = 115200,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    uart_driver_install(UART_NUM_2, RX_BUF_SIZE * 2, 0, 0, NULL, 0);
-    uart_param_config(UART_NUM_2, &uart_config);
-    uart_set_pin(UART_NUM_2, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(UART_NUM_1, RX_BUF_SIZE * 2, 0, 0, NULL, 0);
+    uart_param_config(UART_NUM_1, &uart_config);
+    uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
 int sendData(const char* logName, const char* data) {
     const int len = strlen(data);
-    const int txBytes = uart_write_bytes(UART_NUM_2, data, len);
+    const int txBytes = uart_write_bytes(UART_NUM_1, data, len);
     ESP_LOGI(logName, "Wrote %d bytes", txBytes);
     return txBytes;
 }
@@ -87,7 +87,7 @@ void rx_task(void *arg) {
     esp_log_level_set(RX_TASK_TAG, ESP_LOG_INFO);
     uint8_t* data = (uint8_t*) malloc(RX_BUF_SIZE + 1);
     while (1) {
-        const int rxBytes = uart_read_bytes(UART_NUM_2, data, RX_BUF_SIZE, 1000 / portTICK_PERIOD_MS);
+        const int rxBytes = uart_read_bytes(UART_NUM_1, data, RX_BUF_SIZE, 1000 / portTICK_PERIOD_MS);
         if (rxBytes > 0) {
             data[rxBytes] = 0;
             ESP_LOGI(RX_TASK_TAG, "Read %d bytes: '%s'", rxBytes, data);
@@ -158,8 +158,11 @@ static void rc522_handler(void* arg, esp_event_base_t base, int32_t event_id, vo
 {
     rc522_event_data_t* data = (rc522_event_data_t*) event_data;
     esp_rom_gpio_pad_select_gpio(5);
+    esp_rom_gpio_pad_select_gpio(15);
     gpio_set_direction(5, GPIO_MODE_OUTPUT);
+    gpio_set_direction(15, GPIO_MODE_OUTPUT);
     gpio_set_level(5,0);
+    gpio_set_level(15,0);
     switch(event_id) {
         case RC522_EVENT_TAG_SCANNED: {
                 rc522_tag_t* tag = (rc522_tag_t*) data->ptr;
@@ -167,12 +170,16 @@ static void rc522_handler(void* arg, esp_event_base_t base, int32_t event_id, vo
                 if(tag->serial_number == 99109377392){
                     ESP_LOGI(RC522_TAG, "Authorized tag detected");
                     gpio_set_level(5,1);
-                    vTaskDelay(2000/portTICK_PERIOD_MS); // Delay for 2 seconds
-                    gpio_set_level(5,0); // Turn off the LED after delay
-                    ESP_LOGI(RC522_TAG, "LED turned off");
+                    vTaskDelay(2000/portTICK_PERIOD_MS);
+                    gpio_set_level(5,0);
+                    ESP_LOGI(RC522_TAG, "LED1 turned off");
                 }
                 else {
                     ESP_LOGI(RC522_TAG, "Unauthorized tag");
+                    gpio_set_level(15,1);
+                    vTaskDelay(2000/portTICK_PERIOD_MS);
+                    gpio_set_level(15,0);
+                    ESP_LOGI(RC522_TAG, "LED2 turned off");
                 }
             }
             break;
@@ -195,18 +202,17 @@ void rc522_task(void *pv) {
     rc522_start(scanner);
 
     while (1) {
-        // Allow the RC522 event handler to process events
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
 void app_main(void) {
     uart_init();
-    ESP_ERROR_CHECK(i2cdev_init());
+    //ESP_ERROR_CHECK(i2cdev_init());
 
-    xTaskCreate(rx_task, "uart_rx_task", 1024 * 2, NULL, configMAX_PRIORITIES - 1, NULL);
-    xTaskCreate(tx_task, "uart_tx_task", 1024 * 2, NULL, configMAX_PRIORITIES - 2, NULL);
-    // xTaskCreate(display_task, "display", 1024 * 4, NULL, configMAX_PRIORITIES - 2, NULL);
-    // xTaskCreate(detecting_motion_task, "detecting motion", 1024 * 2, NULL, configMAX_PRIORITIES - 2, NULL);
-    // xTaskCreate(rc522_task, "rc522_task", 1024 * 4, NULL, configMAX_PRIORITIES - 1, NULL);
+    xTaskCreate(rx_task, "uart_rx_task", 1024 * 2, NULL, 6 - 1, NULL);
+    xTaskCreate(tx_task, "uart_tx_task", 1024 * 2, NULL, 6 - 2, NULL);
+    //xTaskCreate(display_task, "display", 1024 * 4, NULL, configMAX_PRIORITIES - 2, NULL);
+    //xTaskCreate(detecting_motion_task, "detecting motion", 1024 * 2, NULL, 6 - 2, NULL);
+    //xTaskCreate(rc522_task, "rc522_task", 1024 * 4, NULL, 6 - 1, NULL);
 }
